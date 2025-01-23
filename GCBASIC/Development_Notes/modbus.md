@@ -11,7 +11,7 @@ The Arduino, Raspberry Pi & ESP32 maker community love saving money. This is why
 You need to set up the ADL200 via its internal display for the rs-485 parameters being used (page 7 of manual).
 [ADL200 Manual](https://www.acrelenergy.com/uploads/file/adl200-manual.pdf)
 When you set the ADL200 parameters, they are stored in a register that can be accessed via rs-485. Just letting you know this, but no real need to access these unless you were trying to fault find why the data link is not working.
-We use 9600 baud.
+We will use 9600 baud.
 
 ## Holding Registers in the Acrel Power Meter
 
