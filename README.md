@@ -1,6 +1,6 @@
-**Power-Monitoring**
+#Power-Monitoring
 
-This repository provides GCBASIC support for the DL200 single-phase electric meter. The DL200 is designed for single-phase active energy measurement on low voltage systems and can measure various electrical parameters including voltage, current, and power.
+This repository provides GCBASIC support for the ADL200 single-phase electric meter. The ADL200 is designed for single-phase active energy measurement on low voltage systems and can measure various electrical parameters including voltage, current, and power.
 
 **Key Features:**
 - **Active Energy Measurement:** Accurately measure the active energy consumption on single-phase systems.
@@ -9,7 +9,7 @@ This repository provides GCBASIC support for the DL200 single-phase electric met
 - **Versatile Applications:** Ideal for a range of applications including residential, commercial, and industrial power monitoring.
 
 **Setup and Usage:**
-Start by connecting your DL200 electric meter to your system. Utilize the GCBASIC compiler to write your code, compile, and upload it to your microcontroller. Monitor and analyze your electrical parameters with precision and efficiency.
+Start by connecting your ADL200 electric meter to your system. Utilize the GCBASIC compiler to write your code, compile, and upload it to your microcontroller. Monitor and analyze your electrical parameters with precision and efficiency.
 
 **Contributions and Feedback:**
 We welcome contributions and feedback from the community to improve and expand the capabilities of this project. Feel free to submit pull requests and share your insights and suggestions.
