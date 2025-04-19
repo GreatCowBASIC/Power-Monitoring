@@ -1,0 +1,43 @@
+// A demonstration program for GCBASIC
+// ---------------------------------------------------------------------------------
+// This program 
+//
+// @author  Evan Venn
+// @licence GPL
+// @version 1.0
+// @date    17/04/2025
+// ********************************************************************************
+
+// Set microcontroller type and clock speed
+#chip  MEGA328PB, 16
+#option Explicit
+
+#DEFINE USART_BAUD_RATE 9600
+#DEFINE USART_TX_BLOCKING
+#DEFINE USART_DELAY OFF
+
+
+// Define pin constants
+#Define LED     PORTB.5
+
+#include <glcd.h>
+    #DEFINE GLCD_TYPE GLCD_TYPE_ILI9488
+    // #DEFINE ILI9488_HARDWARESPI
+    #DEFINE HWSPIMODE MASTERFAST 
+
+     ; ----- GLCD Ports
+    #DEFINE GLCD_SCK      PortB.5
+    #DEFINE GLCD_DO       PortB.3
+    #DEFINE GLCD_DI       PortB.4
+    #DEFINE GLCD_RST      PortB.1
+    #DEFINE GLCD_RESET      PortB.1
+    #DEFINE GLCD_DC       PortB.0
+    #DEFINE GLCD_CS       PortB.2
+
+    FilledBox 0,0, 10,10, TFT_WHITE
+    HSerPrintStringCRLF "Completed"
+
+    Do
+        FilledBox 0,0, 100,100, TFT_RED
+        HSerSend "."
+    Loop

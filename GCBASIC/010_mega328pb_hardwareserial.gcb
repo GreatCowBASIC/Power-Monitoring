@@ -1,0 +1,64 @@
+// A program for GCBASIC
+// ---------------------------------------------------------------------------------
+// This program initializes the Nano board with Mega328PB and 16MHz external clock.
+//
+// Notes:
+// - The chip clearly states ATmega328PB, but the bootloader was for ATmega328B.
+// - Using AVRDUDE:
+//   * In bootloader mode, it reports ATmega328P.
+//   * Using USBASP programmer, it reports ATmega328PB.
+// - It appears that some Chinese manufacturers are using an incorrect bootloader.
+// - I have flashed the correct OptiBootloader, which enables specifying the correct chip for GCBASIC.
+// - These boards are confirmed as ATmega328PB with a 16MHz external clock.
+//
+// @author  Evan Venn
+// @licence GPL
+// @version 1.0
+// @date    17/04/2025
+// ********************************************************************************
+
+// Set microcontroller type and clock speed
+#chip  MEGA328PB, 16
+#option Explicit
+
+// Define pin constants
+#Define SWITCH  portb.7
+#Define LED     portb.5
+
+// Use Volatile to ensure the compiler does not try to optimize the code
+#option Volatile LED
+// Set direction of LED as output
+Dir LED out
+
+// USART settings for USART1
+#define USART_BAUD_RATE 9600
+#define USART_TX_BLOCKING
+
+// ----- Variables
+Dim StringLenByte, RecByte As Byte
+Dim STxDataByte alias Serdata  // Alias the table data direct to the variable used by the library to send data to the port
+
+// ----- Main body of program commences here.
+
+wait 3 s      // To give you time to connect the terminal
+
+// Clear terminal with form feed and newlines
+HserSend 1
+HserSend 1
+HserSend 10
+HserSend 13
+HserSend 10
+HserSend 13
+
+// Display welcome information and chip details
+HSerPrintStringCRLF "GCBASIC 2025"
+HSerPrintStringCRLF "Program #010 - prove the basic microntroller capability"
+HSerPrintStringCRLF CHIPNAMESTR
+HSerPrintStringCRLF ""
+
+// Main program loop
+Do
+    wait 100 ms
+    HSerSend "."  // Send a period character to show activity
+    LED = ! LED   // Toggle LED state
+Loop
