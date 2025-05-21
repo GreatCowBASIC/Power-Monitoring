@@ -1,0 +1,81 @@
+' Function to decode a MODBUS RTU frame with unknown length
+Function ModBusDecodeRTU() As Byte
+    
+    Dim ModBusBuffer(64) As Byte   ' Dynamic buffer (adjust size as needed)
+    Dim ModBusIndex As Byte
+    Dim ModBusByteCount As Byte
+    Dim ModBus_CRC As Word
+    
+    ' Initialize index
+    ModBusIndex = 0
+    
+    ' Read MODBUS frame dynamically
+    Do
+        If HSerAvailable() > 0 Then
+            ModBusBuffer(ModBusIndex) = HSerReceive()
+            ModBusIndex = ModBusIndex + 1
+        End If
+        
+        ' Prevent buffer overflow
+        If ModBusIndex >= 64 Then Exit Do
+
+    Loop While HSerAvailable() > 0
+
+    ' Check if we have enough bytes to process (Minimum frame size: 5 bytes)
+    If ModBusIndex < 5 Then
+        Return 0 ' Invalid frame (Too short)
+    End If
+
+    ' Extract Slave Address & Function Code (Ignored for Data Extraction)
+    Dim ModBusSlaveID As Byte = ModBusBuffer(0)
+    Dim ModBusFunctionCode As Byte = ModBusBuffer(1)
+    
+    ' Extract Byte Count (Determines the actual data length)
+    ModBusByteCount = ModBusBuffer(2) 
+
+    ' Validate frame length (ByteCount + CRC should match received bytes)
+    If ModBusIndex <> (ModBusByteCount + 5) Then
+        Return 0 ' Frame length error
+    End If
+
+    ' Validate CRC-16 (Last two bytes of frame)
+    ModBus_CRC = ModBusCRC(ModBusBuffer, ModBusIndex - 2)
+    If ModBus_CRC <> (ModBusBuffer(ModBusIndex - 2) + (ModBusBuffer(ModBusIndex - 1) << 8)) Then
+        Return 0 ' CRC error
+    End If
+
+    ' Print extracted data section (Skipping Slave ID & Function Code)
+    HSerPrint "Data Section: "
+    Dim ModBusDataIndex As Byte
+    For ModBusDataIndex = 3 To (ModBusByteCount + 2)
+        HSerPrint ByteToHex(ModBusBuffer(ModBusDataIndex))
+        HSerPrint " "
+    Next ModBusDataIndex
+
+    HSerPrint "\n"
+
+    Return 1 ' Frame successfully decoded
+
+End Function
+
+' Function to calculate MODBUS RTU CRC-16 (Minimal RAM Usage)
+Function ModBusCRC(ModBusData() As Byte, ModBusLength As Byte) As Word
+    Dim ModBus_CRC As Word 
+    ModBus_CRC = 0xFFFF
+    Dim ModBusI, ModBusJ As Byte
+    
+    For ModBusI = 0 To (ModBusLength - 1)
+        ModBus_CRC = ModBus_CRC Xor ModBusData(ModBusI)
+        
+        For ModBusJ = 0 To 7
+            If (ModBus_CRC And 0x0001) <> 0 Then
+                ModBus_CRC = (ModBus_CRC >> 1) Xor 0xA001
+            Else
+                ModBus_CRC = ModBus_CRC >> 1
+            End If
+        Next ModBusJ
+    Next ModBusI
+    
+    Return ModBus_CRC
+End Function
+

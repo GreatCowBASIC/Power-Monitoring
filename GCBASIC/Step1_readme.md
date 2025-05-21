@@ -57,7 +57,6 @@ The following program demonstrates the functionality of the Nano board configure
     #option Explicit
 
     // Define pin constants
-    #Define SWITCH  portb.7
     #Define LED     portb.5
 
     // Use Volatile to ensure the compiler does not try to optimize the code
@@ -68,10 +67,6 @@ The following program demonstrates the functionality of the Nano board configure
     // USART settings for USART1
     #define USART_BAUD_RATE 9600
     #define USART_TX_BLOCKING
-
-    // ----- Variables
-    Dim StringLenByte, RecByte As Byte
-    Dim STxDataByte alias Serdata  // Alias the table data direct to the variable used by the library to send data to the port
 
     // ----- Main body of program commences here.
 

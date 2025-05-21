@@ -1,0 +1,101 @@
+/*
+    An example program for GCGB and GCB.
+    ------------------------------------------------------------------------
+    This program blinks the onboard LED of a microcontroller - simple - the demonstration should work across many microcontrollers.
+
+    This sample file can be adapted to any of the supported microcontrollers by simply changing the #chip definition - do this by changing to your chip. Other common chips are shown.
+
+    To make your programmer or your bootloader work, simply do the following.
+
+    From within this IDE, press function_key F4, then select  'Edit Programmer Preferences'.   This will show you the 'Programmer Preferences', select the 'Programmer' tab.
+
+    For PIC:  Typically, if you are using a PICKIT2 then select 'Microchip PICKit 2 CLI - Default' will work for you - select and drag this to the top of the dialog area.
+
+    For AVR:  Typically, for an UNO the programmer 'Arduino UNO/328p@115200' will work, select the option from the list of programmers, then, select 'Edit',
+    please edit the communication 'Port', select 'OK', and, then select this option again and drag this to the top of the dialog area.
+
+
+    For further adventures with GCBASIC .... Select F4 and then "view Demos" for 1000's of sample programs.
+
+
+    Enjoy.
+
+*/
+
+// ************************************************************************
+
+//  ----- Configuration
+
+
+
+
+#CHIP 16f877a
+#option Explicit
+
+#DEFINE USART_BAUD_RATE 9600
+#DEFINE USART_TX_BLOCKING
+#DEFINE USART_DELAY OFF
+
+
+
+Dim ModBusDeviceAddress, ModBusRegisterAddress, ModBusAddressesTorRead
+    ModBusDeviceAddress = 1
+    ModBusRegisterAddress = ADL200_FREQUENCY
+    ModBusAddressesTorRead = 1
+
+Dim myModBusRequestArray(7) as Byte
+
+ModbusRequest( ModBusDeviceAddress, MODBUS_READ_HOLDING_REGS , ModBusRegisterAddress, ModBusAddressesTorRead, myModBusRequestArray() )
+    
+    Dim ModBusCC As Byte
+    For ModBusCC = 0 To 7
+        HSerPrint ByteToHex(myModBusRequestArray(ModBusCC))
+        HSerPrint " "
+    Next ModBusCC
+
+
+
+
+
+' Function to build MODBUS RTU request with CRC calculation
+Function ModBusRequest(ModBusSlaveID As Byte, ModBusFunctionCode As Byte, ModBusRegisterAddress As Word, ModBusNumRegisters As Word, out ModBusRequestArray()) As Byte
+    
+    Dim ModBusRequestArray(7) As Byte   ' MODBUS RTU message structure
+    Dim ModBus_CRC As Word
+    
+    ' Construct the MODBUS RTU request
+    ModBusRequestArray(0) = ModBusSlaveID
+    ModBusRequestArray(1) = ModBusFunctionCode
+    ModBusRequestArray(2) = ModBusRegisterAddress_H
+    ModBusRequestArray(3) = ModBusRegisterAddress
+    ModBusRequestArray(4) = ModBusNumRegisters_H
+    ModBusRequestArray(5) = ModBusNumRegisters
+    
+    ' Calculate CRC-16
+    ModBus_CRC = ModBusCRC(ModBusRequestArray, 6)
+    ModBusRequestArray(6) = ModBus_CRC
+    ModBusRequestArray(7) = ModBus_CRC_H
+
+End Function
+
+' Function to calculate CRC-16 (MODBUS RTU)
+Function ModBusCRC(ModBusData() As Byte, ModBusLength As Byte) As Word
+    Dim ModBus_CRC As Word 
+    ModBus_CRC = 0xFFFF
+    Dim ModBusI, ModBusJ As Byte
+    
+    For ModBusI = 0 To (ModBusLength - 1)
+        ModBus_CRC = ModBus_CRC Xor ModBusData(ModBusI)
+        
+        For ModBusJ = 0 To 7
+            If (ModBus_CRC And 0x0001) <> 0 Then
+                ModBus_CRC = (ModBus_CRC >> 1) Xor 0xA001
+            Else
+                ModBus_CRC = ModBus_CRC >> 1
+            End If
+        Next ModBusJ
+    Next ModBusI
+    
+    Return ModBus_CRC
+End Function
+

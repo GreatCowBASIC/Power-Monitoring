@@ -1,0 +1,405 @@
+// A demonstration program for GCBASIC
+// ---------------------------------------------------------------------------------
+// This program 
+//
+// @author  Evan Venn
+// @licence GPL
+// @version 1.0
+// @date    17/04/2025
+// ********************************************************************************
+
+// Set microcontroller type and clock speed
+#chip  MEGA328PB, 16
+#option Explicit
+
+// Define pin constants
+    #Define LED     PORTB.5
+
+#include <glcd.h>
+    #DEFINE GLCD_TYPE GLCD_TYPE_ILI9488
+    #DEFINE ILI9488_HARDWARESPI
+    #DEFINE HWSPIMODE MasterUltraFast
+
+    // SendCommand_ILI9488(ILI9488_CMD_DISPLAY_OFF)
+
+    // ----- GLCD Ports for ILI9488
+    #DEFINE GLCD_SCK      PortB.5  
+    #DEFINE GLCD_DO       PortB.3
+    #DEFINE GLCD_DI       PortB.4
+    #DEFINE GLCD_RST      PortB.1
+    #DEFINE GLCD_DC       PortB.0
+    #DEFINE GLCD_CS       PortB.2
+
+    #DEFINE USART_BAUD_RATE 9600
+    #DEFINE USART_TX_BLOCKING
+    #DEFINE USART_DELAY OFF
+
+//*************************** Main Program ***************************************
+
+    #include "ADL200.h"
+
+
+    // Create the supporting variables
+    Dim next_in As Byte
+    Dim next_out As Byte
+    Dim syncbyte As Byte
+    Dim temppnt As Byte
+
+    // Constants etc required for Buffer Ring
+    #DEFINE BUFFER_SIZE 8
+    #DEFINE bkbhit (next_in <> next_out)
+
+    // Define the Buffer
+    Dim buffer( BUFFER_SIZE - 1 ) // we will use element 0 in the array as part of out buffer
+
+    // Call init the buffer
+    InitBufferRing
+
+
+
+    // String constant
+    #DEFINE  SYSDEFAULTCONCATSTRING  24
+
+    // Set display orientation
+    GLCDROTATE Landscape
+
+    Box 0, 0, GLCDDeviceWidth-1, GLCDDeviceHeight-1, TFT_YELLOW
+    Box 1, 1, GLCDDeviceWidth-2, GLCDDeviceHeight-2, TFT_YELLOW
+
+    FilledBox (GLCDDeviceWidth/2) - 1, 20, ( GLCDDeviceWidth /2) + 1,  GLCDDeviceHeight, TFT_YELLOW
+    Box 0, 0, GLCDDeviceWidth,  20, TFT_YELLOW
+    
+    GLCDPRINTLARGEFONT 138, 2, "ADL2000 Monitor", TFT_WHITE
+    
+    GLCDPRINTLARGEFONT 5, 30, "Active Metrics", ILI9488_TFT_GREEN
+    
+    GLCDPRINTLARGEFONT 15, 60, "Voltage"
+    GLCDPRINTLARGEFONT 15, 80, "Frequency"
+    
+    Box (GLCDDeviceWidth/2)+10, 40, GLCDDeviceWidth - 10  , GLCDDeviceHeight - 20, TFT_YELLOW
+    FilledBox (GLCDDeviceWidth/2)+10, 40, (GLCDDeviceWidth - 10), 80, TFT_GREEN
+    
+    RoundRect (GLCDDeviceWidth/2)+20, 120, GLCDDeviceWidth - 20  , GLCDDeviceHeight - 40, TFT_YELLOW
+
+    Dim myVoltage, mycurrent, mycurrenttotalactivenergy, mycurrentforwaretotalenergy as Word
+    Dim pulse as Byte
+        pulse = 0
+
+    #DEFINE POS_PULSE_CIRCLEX 450
+    #DEFINE POS_PULSE_CIRCLEY 98
+
+
+    GLCDPrintWithSize( 280, 140, "V", 4 )
+    GLCDPrintWithSize( 280, 180, "A", 4 )
+    GLCDPrintWithSize( 280, 220, "F", 4 )
+    
+
+
+    Dim ModBusDeviceAddress, ModBusAddressesTorRead
+    Dim ModBusRegisterAddress as Word
+    Dim myModBusRequestArray(7) as Byte  
+    Dim ModBusCC As Byte
+
+
+
+'**********************************
+' Modbus Serial Data Processing Code
+' Reads Modbus data, processes it, and displays values graphically.
+' Uses bkbhit to check for incoming serial buffer events and bgetc to retrieve data.
+'**********************************
+
+Dim screenX, screenY, datacounter, dataPoint as Word
+Dim frequency, cachevalue as Word
+Dim synccode, inchar as Byte
+Dim inbufferstring as String * 8
+Dim logString as String * 16
+
+Dim ModbusCurrentState As Byte
+Dim ModbusByteCounter As Byte
+Dim ModbusTempHigh As Byte
+Dim ModbusTempLow As Byte
+
+' Initialize the state machine
+ModbusCurrentState = MODBUS_IDLE
+
+' Initialize screen position and variables
+screenX = 0
+screenY = 100
+
+frequency = 0
+mycurrent = 0
+
+datacounter = 1
+dataPoint = 1
+
+Do
+    
+    ' Check if serial buffer contains data
+    DO WHILE bkbhit
+        inchar = bgetc  ' Retrieve next byte from buffer
+
+        ' Process Modbus packet synchronization
+        Select Case synccode 
+            Case 0 
+                ' Wait for Modbus device address
+                If inchar = ModBusDeviceAddress Then 
+                    synccode = 1    
+                End If
+            Case 1
+                ' Wait for Modbus function code
+                If inchar = (MODBUS_READ_HOLDING_REGS and 0x7F) Then 
+                    synccode = 2
+                    datacounter = 1
+                Else
+                    synccode = 0
+                End If
+            Case 2
+                ' Handle received data
+                Select Case datacounter
+                    Case 2
+                        ' Expected number of bytes in packet
+                    Case 3
+                        cachevalue_H = inchar  ' High byte of value
+                    Case 4
+                        [Byte]cachevalue = inchar  ' Low byte of value
+                    Case 5
+                        synccode = 0  ' Reset sync state
+                End Select
+                
+                pulse = 0
+
+            Case Else
+                synccode = 0 
+        End Select    
+
+        datacounter++
+    Loop
+
+    ' Update pulse indicator
+    If pulse = 0 Then 
+        FilledCircle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 10, TFT_GREEN
+    Else
+        FilledCircle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 10, GLCDBackGround
+        Circle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 9, TFT_RED
+        cachevalue = 0
+    End If
+
+    pulse++
+
+    ' Display Modbus read status
+    GLCDBackGround = TFT_GREEN
+    GLCDPrint 320, 50, "CONSUME", TFT_BLACK
+    GLCDBackGround = TFT_BLACK
+
+    ' Process and store Modbus data values
+    Select Case ModBusRegisterAddress
+        Case ADL200_CURRENT_TOTAL_ACTIVE_ENERGY
+            mycurrenttotalactivenergy = cachevalue
+        Case ADL200_CURRENT_FORWARD_TOTAL_ENERGY
+            mycurrentforwaretotalenergy = cachevalue
+        Case ADL200_FREQUENCY
+            frequency = cachevalue
+        Case ADL200_VOLTAGE
+            myvoltage = cachevalue
+        Case ADL200_CURRENT
+            mycurrent = cachevalue
+            SendCommand_ILI9488(ILI9488_CMD_DISPLAY_ON)  ' Turn on display when current data is received
+    End Select
+
+    ' Display formatted values
+    PrintFormattedValue(140,    60,     310,    140,    myVoltage, 10, 4, ILI9488_TFT_RED)
+    PrintFormattedValue(0,      0,      310,    180,    myCurrent, 100, 4)
+    PrintFormattedValue(140,    80,     310,    220,    frequency, 100, 4, ILI9488_TFT_RED)
+    PrintFormattedValue(140,   100,       0,      0,    mycurrenttotalactivenergy, 100, 4, ILI9488_TFT_RED)
+    PrintFormattedValue(140,   120,       0,      0,    mycurrentforwaretotalenergy, 100, 4, ILI9488_TFT_RED)
+
+    ' Modbus data request cycle
+    ModBusDeviceAddress = 1
+    ModBusAddressesTorRead = 1
+
+    ' Determine next Modbus register to request data from
+    ReadTable ADL200_readregisterssequence, DataPoint, ModBusRegisterAddress
+    If ModBusRegisterAddress = 0xFFFF Then 
+        DataPoint = 1
+    Else
+        DataPoint++
+    End If
+  
+Table ADL200_readregisterssequence as Word
+    ADL200_FREQUENCY
+    ADL200_VOLTAGE
+    ADL200_CURRENT
+    ADL200_TOTAL_ACTIVE_LAST_MONTH
+    ADL200_CURRENT_FORWARD_TOTAL_ENERGY
+    0xFFFF
+End Table
+
+    ' Send Modbus request
+    ModbusRequest(ModBusDeviceAddress, MODBUS_READ_HOLDING_REGS, ModBusRegisterAddress, ModBusAddressesTorRead, myModBusRequestArray())
+
+    ' Transmit Modbus request packet
+    For ModBusCC = 0 To 7
+        HSerSend myModBusRequestArray(ModBusCC)
+    Next ModBusCC
+
+    wait 25 ms  ' Small delay before next loop iteration
+
+Loop
+
+
+    // Supporting subroutines
+
+    Sub readUSART
+
+        buffer(next_in) = HSerReceive
+        temppnt = next_in
+        next_in = ( next_in + 1 ) % BUFFER_SIZE
+        If ( next_in = next_out ) Then  // buffer is full!!
+            next_in = temppnt
+        End If
+
+    End Sub
+
+    Function bgetc
+        Dim local_next_out as Byte    // maintain a local copy of the next_out variable to ensure it does not change when an Interrupt happens
+        local_next_out = next_out
+        bgetc = buffer(local_next_out)
+        local_next_out=(local_next_out+1) % BUFFER_SIZE
+        INTOFF
+        next_out = local_next_out
+        INTON
+    End Function
+
+
+
+
+    Sub InitBufferRing
+
+        // Set the buffer to the first address
+        next_in = 0
+        next_out = 0
+        On Interrupt UsartRX1Ready Call readUSART
+
+
+    End Sub
+
+  
+// Function: HexStringToNumber
+// Purpose: Converts a 4-character hexadecimal string into a Long integer value.
+// Parameters:
+//   - _HS2N_HexStr (String): The hexadecimal string to be converted. 
+// Return Value:
+//   - Long: The numerical representation of the hexadecimal string, or 0 if invalid characters are encountered.
+
+Function HexStringToNumber(_HS2N_HexStr As String) As Long    
+    // Local variables
+    Dim _HS2N_CurrentChar As Byte       // Stores the current character being processed
+    Dim _HS2N_CurrentCharCount As Byte  // Index for iteration through the hex string
+    Dim _HS2N_HexStr As String * 4      // Ensures input string is exactly 4 characters long
+
+    // Initialize return value
+    HexStringToNumber = 0
+
+    // Iterate through each character in the hex string
+    For _HS2N_CurrentCharCount = 1 To _HS2N_HexStr(0)
+        // Retrieve the current character
+        _HS2N_CurrentChar = _HS2N_HexStr(_HS2N_CurrentCharCount)
+
+        // Determine if character is a valid hexadecimal digit
+        If _HS2N_CurrentChar >= "0" And _HS2N_CurrentChar <= "9" Then
+            // Convert numeric characters ('0'-'9') to their integer values
+            HexStringToNumber = HexStringToNumber Or Val(Chr(_HS2N_CurrentChar))  
+        Else If _HS2N_CurrentChar >= "a" And _HS2N_CurrentChar <= "f" Then
+            // Convert lowercase hex letters ('a'-'f') to their integer values
+            HexStringToNumber = HexStringToNumber Or _HS2N_CurrentChar - 87
+        Else If _HS2N_CurrentChar >= "A" And _HS2N_CurrentChar <= "F" Then
+            // Convert uppercase hex letters ('A'-'F') to their integer values
+            HexStringToNumber = HexStringToNumber Or _HS2N_CurrentChar - 55
+        Else
+            // If an invalid character is found, return 0 and exit
+            HexStringToNumber = 0
+            Exit Function
+        End If
+
+        // Shift bits left by 4 positions (equivalent to multiplying by 16) if not the last character
+        If _HS2N_CurrentCharCount < _HS2N_HexStr(0) Then HexStringToNumber = HexStringToNumber << 4  
+    Next
+
+End Function
+
+
+
+Sub PrintFormattedValue(PFV_PRINTLOCX1 As Word, PFV_PRINTLOCY1 As Word, PFV_PRINTLOCX2 As Word, PFV_PRINTLOCY2 As Word, _HS2N_value As Word, _HS2N_divisor As Word, _GLCDPrintSize As Word, Optional Color As Long = TFT_RED )
+    
+    Dim PrintData As String
+
+    ' Default value if the number is zero
+    PrintData = "0.0  "
+    If _HS2N_value <> 0 Then
+        ' Format value into a string with a decimal point
+        PrintData = Str(_HS2N_value / _HS2N_divisor) + "."
+        PrintData = PrintData + Mid(Str(_HS2N_value), Len(Str(_HS2N_value) + " ") - 1, 3)
+    End If
+
+    If PFV_PRINTLOCX1 <> 0 OR PFV_PRINTLOCY1 <> 0 Then
+        ' Print the formatted value with large font at specified coordinates and color
+        GLCDPRINTLARGEFONT PFV_PRINTLOCX1, PFV_PRINTLOCY1, PrintData, Color
+    End If
+
+    If PFV_PRINTLOCX2 <> 0 OR PFV_PRINTLOCY2 <> 0 Then
+        ' Print the formatted value with specified font size and color at separate coordinates
+        GLCDPrintWithSize(PFV_PRINTLOCX2, PFV_PRINTLOCY2, PrintData, _GLCDPrintSize)
+    End If
+End Sub
+
+Enum ModbusState
+    MODBUS_IDLE           ' Waiting for a new message
+    MODBUS_SYNC           ' Sync with Modbus device address
+    MODBUS_FUNCTION_CODE  ' Identify function code
+    MODBUS_PROCESS_DATA   ' Read incoming data bytes
+    MODBUS_COMPLETE       ' Packet processing finished
+End Enum
+
+
+
+Sub ProcessModbusSerial()
+    DO WHILE bkbhit
+        Dim inchar As Byte
+        inchar = bgetc
+
+        ' State machine logic
+        Select Case ModbusCurrentState
+            Case MODBUS_IDLE
+                If inchar = ModBusDeviceAddress Then 
+                    ModbusCurrentState = MODBUS_SYNC
+                End If
+            
+            Case MODBUS_SYNC
+                If inchar = (MODBUS_READ_HOLDING_REGS AND 0x7F) Then 
+                    ModbusCurrentState = MODBUS_FUNCTION_CODE
+                    ModbusByteCounter = 1
+                Else
+                    ModbusCurrentState = MODBUS_IDLE
+                End If
+
+            Case MODBUS_FUNCTION_CODE
+                Select Case ModbusByteCounter
+                    Case 2
+                        ' Expected number of bytes in packet
+                    Case 3
+                        ModbusTempHigh = inchar  ' High byte of value
+                    Case 4
+                        ModbusTempLow = inchar   ' Low byte of value
+                        ModbusCurrentState = MODBUS_COMPLETE
+                    Case Else
+                        ModbusCurrentState = MODBUS_IDLE
+                End Select
+                ModbusByteCounter++
+
+            Case MODBUS_COMPLETE
+                ' Store the final value and reset state
+                cachevalue = (ModbusTempHigh << 8) OR ModbusTempLow
+                ModbusCurrentState = MODBUS_IDLE
+        End Select
+    Loop
+End Sub
