@@ -1,0 +1,173 @@
+= ADL2000 Monitor Project
+
+== Project Overview
+
+The ADL2000 Monitor project is a GCBASIC demonstration program designed to interface with an ADL2000 energy monitor via the Modbus RTU protocol, retrieving and displaying real-time metrics such as voltage, frequency, and current on an ILI9488 GLCD display. Running on an ATmega328PB microcontroller at 16 MHz, the program uses a state machine to process Modbus responses, a ring buffer for serial data handling, and software serial for debug output. Metrics are formatted with two decimal places (e.g., 235.20 V, 50.10 Hz, 0.34 A) and displayed on the GLCD, with optional debug logging to aid development and troubleshooting.
+
+*Author*: Evan Venn  
+*License*: GPL  
+*Version*: 1.0  
+*Date*: 17/04/2025
+
+== Features
+
+- Configures an ILI9488 GLCD for graphical output in landscape mode.
+- Implements Modbus RTU communication over hardware USART at 9600 baud.
+- Uses a ring buffer to manage incoming serial data, preventing data loss.
+- Displays real-time metrics (voltage, frequency, current) on the GLCD.
+- Supports debug output via software serial, controlled by preprocessor directives.
+- Includes a state machine for robust Modbus response processing.
+
+== Hardware Requirements
+
+- *Microcontroller*: ATmega328PB (16 MHz), compatible with Arduino Nano (ATmega328P can be adapted with limitations).
+- *Display*: ILI9488 GLCD (SPI interface).
+- *Modbus Device*: ADL2000 energy monitor (or compatible Modbus RTU device).
+- *Connections*:
+  - *GLCD Pins* (SPI):
+    - SCK: PORTB.5 (D13)
+    - DO (MOSI): PORTB.3 (D11)
+    - DI (MISO): PORTB.4 (D12)
+    - RST: PORTB.1 (D9)
+    - DC: PORTB.0 (D8)
+    - CS: PORTB.2 (D10)
+  - *LED*: PORTB.5 (D13, shared with SCK)
+  - *Hardware USART*:
+    - RXD: PORTD.0 (D0)
+    - TXD: PORTD.1 (D1)
+  - *Software Serial*:
+    - TX: PORTD.2 (D2)
+  - *Port Diagram*:
++
+```
+------------PORTA---------------
+Bit#:  -7---6---5---4---3---2---1---0---
+Nano:  X   X   X   X   X   X   X   X   
+IO:     -   -   -   -   -   -   -   -   
+IO:     -   -   -   -   -   -   -   -   
+
+------------PORTB---------------
+Bit#:  -7---6---5---4---3---2---1---0---
+Nano:  X   X  D13 D12 D11 D10 D9  D8  
+IO:     -   -  SCK  DI  DO  CS RST  DC  
+IO:     -   -  LED  -   -   -   -   -   
+
+------------PORTC---------------
+Bit#:  -7---6---5---4---3---2---1---0---
+Nano:  X   X  A5  A4  A3  A2  A1  A0  
+IO:     -   -   -   -   -   -   -   -   
+IO:     -   -   -   -   -   -   -   -   
+
+------------PORTD---------------
+Bit#:  -7---6---5---4---3---2---1---0---
+Nano:  D7  D6  D5  D4  D3  D2  D1  D0  
+IO:     -   -   -   -   -  STX TXD RXD  
+IO:     -   -   -   -   -   -   -   -   
+
+------------PORTE---------------
+Bit#:  -3---2---1---0---
+Nano:  A7  A6  X   X   
+IO:     -   -   -   -   
+IO:     -   -   -   -   
+```
+
+== Software Requirements
+
+- *GCBASIC Compiler*: Latest version to compile the `.gcb` source code.
+- *Dependencies*:
+  - `glcd.h`: Library for ILI9488 GLCD operations.
+  - `SoftSerial.h`: Library for software serial communication.
+  - `ADL200.h`: Defines Modbus register addresses (e.g., `ADL200_FREQUENCY = 0x0011`) and data lengths (1, 2, or 4 bytes) for the ADL2000 device.
+- *Development Environment*: Any text editor or IDE supporting GCBASIC (e.g., GC Studio).
+- *Programming Tool*: Compatible programmer (e.g., USBasp, Arduino ISP) for uploading to the ATmega328PB.
+
+== Installation and Setup
+
+1. **Hardware Setup**:
+   - Connect the ILI9488 GLCD to the ATmega328PB as per the pin assignments (see Port Diagram).
+   - Connect the ADL2000 Modbus device to the hardware USART pins (PD0: RXD, PD1: TXD).
+   - Connect a serial monitor to PORTD.2 (D2) for debug output if needed.
+   - Ensure the ATmega328PB is powered and clocked at 16 MHz.
+
+2. **Software Setup**:
+   - Install the GCBASIC compiler from http://gcbasic.sourceforge.net/.
+   - Place `ADL200.h` and `MODBus.h`in the same directory as `032_mega328pb_ADL200.gcb`.
+   - Open `032_mega328pb_ADL200.gcb` in a text editor or GCBASIC IDE.
+
+3. **Compilation and Upload**:
+   - Compile the code using GCBASIC:
+     
+   - Upload the generated `.hex` file to the ATmega328PB using a programmer (e.g., avrdude with USBasp):
+     ```bash
+     avrdude -c usbasp -p m328pb -U flash:w:032_mega328pb_ADL200.hex
+     ```
+
+== Usage
+
+1. **Running the Program**:
+   - Upon startup, the program initializes the ILI9488 GLCD in landscape mode, displaying "ADL2000 Monitor" and labels for voltage and frequency.
+   - It enters a loop, sending Modbus requests to the ADL2000 device (address 1) for registers defined in `ADL200_readregisterssequence` (frequency: 0x0011, voltage: 0x000B, current: 0x000C).
+   - Responses are processed, and values are displayed with two decimal places:
+     - Voltage: 235.20 V (divided by 10) at (140, 60) and (305, 140).
+     - Current: 0.34 A (divided by 100) at (305, 180).
+     - Frequency: 50.10 Hz (divided by 100) at (140, 80) and (305, 220).
+   - A pulse indicator (green/red circle) blinks at (450, 98) to show activity.
+
+2. **Debugging**:
+   - Enable debug output by uncommenting the following in `032_mega328pb_ADL200.gcb`:
+     ```GCB
+     #DEFINE DEBUG_PROCESSMODBUSSERIALDATA
+     #DEFINE DEBUG_PRINTFORMATTEDVALUE
+     #DEFINE DEBUG_MODBUSREQUESTS
+     ```
+   - Connect a serial monitor (9600 baud) to PORTD.2 (D2) to view:
+     - Modbus response bytes (e.g., `01,03,02,13,92,34,D9, = 5010`).
+     - Formatted values (e.g., `Raw:5010,Div:100,Formatted:50.10`).
+     - Request details (e.g., `ModbusRequest 1, 3, 17, 1`).
+   - Use `#DEFINE SERIALDEBUGTEST1` or `#DEFINE SERIALDEBUGTEST2` to test software serial before or after GLCD initialization.
+
+3. **Modbus Communication**:
+   - The program sends Modbus requests for one register at a time (`ModBusAddressesTorRead = 1`).
+   - Responses are processed via a state machine (`ProcessModbusSerialData`), handling 1, 2, or 4-byte data lengths.
+   - Errors (e.g., exception code 02 for invalid register) are logged as `ERR:02`.
+
+== Configuration
+
+- *Modbus Registers*: Defined in `ADL200.h` (e.g., `ADL200_FREQUENCY = 0x0011`, 2 bytes; `ADL200_VOLTAGE = 0x000B`, 2 bytes).
+- *GLCD Setup*: Configured for ILI9488 in landscape mode with hardware SPI (`MasterUltraFast`).
+- *Serial Configuration*:
+  - Hardware USART: 9600 baud, blocking transmit, no delay.
+  - Software Serial: 9600 baud on PORTD.2 (D2) for debug.
+- *Buffer*: 8-byte ring buffer (`BUFFER_SIZE = 8`) with interrupt-driven receive (`UsartRX1Ready`).
+
+== Troubleshooting
+
+- *No GLCD Display*:
+  - Verify GLCD pin connections (PORTB.0–PORTB.5).
+  - Ensure `glcd.h` is included and `GLCD_TYPE_ILI9488` is defined.
+- *No Modbus Data*:
+  - Check ADL2000 connections (PD0, PD1) and ensure device address is 1.
+  - Verify `ADL200.h` register definitions match the device.
+- *Debug Output Missing*:
+  - Ensure `#DEFINE DEBUG_PROCESSMODBUSSERIALDATA` or other debug directives are enabled.
+  - Connect a serial monitor to PORTD.2 (9600 baud).
+- *Incorrect Values*:
+  - Check `ADL200_GetRegisterDataLength` in `ADL200.h` for correct data lengths (e.g., 2 bytes for frequency, voltage, current).
+  - Verify `PrintFormattedValue` formatting (divisors: 10 for voltage, 100 for frequency/current).
+
+== Contributing
+
+Contributions are welcome! To contribute:
+1. Fork the repository (if hosted, e.g., on GitHub).
+2. Make changes to `032_mega328pb_ADL200.gcb` or related files.
+3. Test thoroughly on an ATmega328PB with the ADL2000 and ILI9488 GLCD.
+4. Submit a pull request with detailed descriptions of changes.
+
+== License
+
+This project is licensed under the GNU General Public License (GPL). See the LICENSE file for details.
+
+== Acknowledgments
+
+- GCBASIC Community for the compiler and libraries.
+- Evan Venn for the initial development and documentation.

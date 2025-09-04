@@ -1,0 +1,724 @@
+/*
+    A demonstration program for GCBASIC
+    ---------------------------------------------------------------------------------
+    High-Level Operation Description:
+    This program interfaces with an ADL2000 energy monitor via Modbus RTU protocol to retrieve and display real-time metrics (voltage, frequency, current) on an ILI9488 GLCD display. 
+    It uses a state machine to process Modbus responses, storing values in a ring buffer for reliable data handling. 
+    Metrics are formatted with two decimal places (e.g., voltage: 235.20 V, frequency: 50.10 Hz, current: 0.34 A) and displayed at specified GLCD coordinates. 
+    Debug output via software serial (Ser1Print) logs Modbus requests, responses, and formatted values when enabled by #IFDEF directives (DEBUG_PROCESSMODBUSSERIALDATA, DEBUG_PRINTFORMATTEDVALUE, DEBUG_MODBUSREQUESTS). 
+    The program cycles through a predefined set of registers (frequency, voltage, current) defined in ADL200.h, sending requests and processing responses in a continuous loop.
+
+    @author  Evan Venn
+    @licence GPL
+    @version 1.0
+    @date    17/04/2025
+    ---------------------------------------------------------------------------------
+    Microcontroller: ATmega328PB running at 16 MHz
+    Features:
+    - Configures ILI9488 GLCD for graphical output
+    - Implements Modbus communication over USART
+    - Uses a ring buffer for serial data handling
+    - Displays real-time metrics (voltage, frequency, current, energy)
+    - Includes state machine for Modbus data processing
+    Serial Communication Details:
+    - Hardware USART at 9600 baud rate for reliable Modbus communication
+        - Pins: PD0 (RXD) and PD1 (TXD), mapped to Arduino Nano D0 (RX) and D1 (TX)
+        - Port Name: Serial (primary hardware serial port, also connected to USB interface)
+    - Software serial (SoftSerial.h) configured for asynchronous data transmission
+        - Pin: PD2 (transmit only), mapped to Arduino Nano D2
+        - Port Name: Software serial port used for debug output via Ser1Print
+        - Ser1Print is used exclusively for debug output, logging Modbus communication states and data
+    - Ring buffer manages incoming serial data to prevent data loss during high-speed communication
+    - Transmit blocking (USART_TX_BLOCKING) ensures stable data transmission
+    - Interrupt-driven USART receive (UsartRX1Ready) handles incoming data efficiently
+    Formatting of Numbers:
+    - Values (e.g., voltage, frequency, current) are formatted with two decimal places in PrintFormattedValue
+    - Voltage: Divided by 10 (e.g., 2352 → 235.20 V)
+    - Frequency and Current: Divided by 100 (e.g., 5010 → 50.10 Hz, 34 → 0.34 A)
+    Dependencies:
+    - glcd.h: For ILI9488 GLCD operations
+    - SoftSerial.h: For software serial communication
+    - ADL200.h: Defines Modbus register addresses (e.g., ADL200_FREQUENCY = 0x0011) and data lengths (1, 2, or 4 bytes) for the ADL2000 device
+    ---------------------------------------------------------------------------------
+    Port Diagram:
+        ------------PORTA---------------
+    Bit#:  -7---6---5---4---3---2---1---0---
+    Nano:  X   X   X   X   X   X   X   X   
+    IO:     -   -   -   -   -   -   -   -   
+    IO:     -   -   -   -   -   -   -   -   
+
+        ------------PORTB---------------
+    Bit#:  -7---6---5---4---3---2---1---0---
+    Nano:  X   X  D13 D12 D11 D10 D9  D8  
+    IO:     -   -  SCK  DI  DO  CS RST  DC  
+    IO:     -   -  LED  -   -   -   -   -   
+
+        ------------PORTC---------------
+    Bit#:  -7---6---5---4---3---2---1---0---
+    Nano:  X   X  A5  A4  A3  A2  A1  A0  
+    IO:     -   -   -   -   -   -   -   -   
+    IO:     -   -   -   -   -   -   -   -   
+
+        ------------PORTD---------------
+    Bit#:  -7---6---5---4---3---2---1---0---
+    Nano:  D7  D6  D5  D4  D3  D2  D1  D0  
+    IO:     -   -   -   -   -  STX TXD RXD  
+    IO:     -   -   -   -   -   -   -   -   
+
+        ------------PORTE---------------
+    Bit#:  -3---2---1---0---
+    Nano:  A7  A6  X   X   
+    IO:     -   -   -   -   
+    IO:     -   -   -   -   
+*/
+
+// Set microcontroller type and clock speed
+    #chip  MEGA328PB, 16
+    #option Explicit
+
+// Testing constants
+    // #DEFINE         JUSTSHOWGLCDPANEL
+    // Select one or none of the following two
+    // #DEFINE         SERIALDEBUGTEST1     //  This is will "Serial Test" continually before GLCD init, 
+    // #DEFINE         SERIALDEBUGTEST2     //  This is will "Serial Test" continually after GLCD init
+
+    // #DEFINE         DEBUG_PROCESSMODBUSSERIALDATA
+    // #DEFINE         DEBUG_PRINTFORMATTEDVALUE
+    // #DEFINE         DEBUG_MODBUSREQUESTS
+
+// Define pin constants
+    #DEFINE LED     PORTB.5
+
+// GLCD Configuration
+    #include <glcd.h>
+    #DEFINE GLCD_TYPE GLCD_TYPE_ILI9488
+    #DEFINE ILI9488_HARDWARESPI
+    #DEFINE HWSPIMODE MasterUltraFast
+
+// GLCD Ports for ILI9488
+    #DEFINE GLCD_SCK      PortB.5  
+    #DEFINE GLCD_DO       PortB.3
+    #DEFINE GLCD_DI       PortB.4
+    #DEFINE GLCD_RST      PortB.1
+    #DEFINE GLCD_DC       PortB.0
+    #DEFINE GLCD_CS       PortB.2
+
+// USART Configuration
+    #DEFINE USART_BAUD_RATE 9600
+    #DEFINE USART_TX_BLOCKING
+    #DEFINE USART_DELAY OFF
+
+// USART Software Configuration
+    // Include library
+    #include <SoftSerial.h>
+
+    // Config Serial UART :
+    #DEFINE SER1_BAUD 9600      // baudrate must be defined
+    // Config I/O ports for transmitting
+    #DEFINE SER1_TXPORT PORTD   // I/O port (without .bit) must be defined
+    #DEFINE SER1_TXPIN 2        // portbit  must be defined
+
+//*************************** Main Program ***************************************
+
+    #include "ADL200.h"
+
+// Buffer management variables 
+    Dim next_in As Byte
+    Dim next_out As Byte
+    Dim syncbyte As Byte
+    Dim temppnt As Byte
+
+// Buffer constants
+    #DEFINE BUFFER_SIZE 8
+    #DEFINE serial_data_in_buffer_ready (next_in <> next_out)
+
+// Buffer array
+    Dim buffer(BUFFER_SIZE - 1) // we will use element 0 in the array as part of our buffer
+
+// String constant
+    #DEFINE SYSDEFAULTCONCATSTRING 24
+
+// Modbus state constants
+    Enum ModbusState
+        MODBUS_IDLE           ' Waiting for a new message
+        MODBUS_SYNC           ' Sync with Modbus device address
+        MODBUS_FUNCTION_CODE  ' Identify function code
+        MODBUS_PROCESS_DATA   ' Read incoming data bytes
+        MODBUS_COMPLETE       ' Packet processing finished
+        MODBUS_ERROR
+    End Enum
+
+// Modbus variables
+    Dim ModBusDeviceAddress, ModBusAddressesTorRead
+    Dim ModBusRegisterAddress as Word
+    Dim myModBusRequestArray(7) as Byte  
+    Dim ModBusCC As Byte
+
+// Data variables
+    Dim mycurrenttotalactivenergyL, mycurrentforwaretotalenergyL as Long
+    Dim myfrequencyW, myVoltageW, mycurrentW as Word
+    Dim pulse as Byte
+
+// Display position constants
+    #DEFINE POS_PULSE_CIRCLEX 450
+    #DEFINE POS_PULSE_CIRCLEY 98
+
+// Modbus state machine variables
+    Dim screenX, screenY, datacounter, dataPoint as Word
+    Dim ModbusCacheValue as Long
+    Dim synccode, serial_data_byte as Byte
+    Dim firstscreenupdate as Bit
+    Dim inbufferstring as String * 8
+    Dim logString as String * 16
+    Dim ModbusCurrentState As Byte
+    Dim ModbusByteCounter As Byte
+    Dim ModbusTempHigh As Byte
+    Dim ModbusTempLow As Byte
+    Dim ModbusRegisterDataLength As Byte
+
+// Initialize buffer ring
+    InitBufferRing
+
+// Initialize variables
+    ModbusCurrentState = MODBUS_IDLE
+    screenX = 0
+    screenY = 100
+    myfrequencyW = 0
+    mycurrentW = 0
+    datacounter = 1
+    dataPoint = 1
+    pulse = 0
+    firstscreenupdate = False
+
+    myVoltageW = 0
+    myCurrentW = 0
+    myfrequencyW = 0
+    mycurrenttotalactivenergyL = 0
+    mycurrentforwaretotalenergyL = 0
+
+// Test software Serial
+    #IFDEF SERIALDEBUGTEST1
+        Do
+            Ser1Print "Serial Test 1"
+            Ser1Send 13
+            Ser1Send 10
+            Wait 100 ms
+        Loop
+    #ENDIF
+
+// Display setup
+    GLCDROTATE Landscape
+
+    Box 0, 0, GLCDDeviceWidth-1, GLCDDeviceHeight-1, TFT_YELLOW
+    Box 1, 1, GLCDDeviceWidth-2, GLCDDeviceHeight-2, TFT_YELLOW
+
+    FilledBox (GLCDDeviceWidth/2) - 1, 20, (GLCDDeviceWidth/2) + 1, GLCDDeviceHeight - 1, TFT_YELLOW
+    Box 0, 0, GLCDDeviceWidth, 20, TFT_YELLOW
+
+    GLCDPRINTLARGEFONT 138, 2, "ADL2000 Monitor", TFT_WHITE
+    GLCDPRINTLARGEFONT 5, 30, "Active Metrics", ILI9488_TFT_GREEN
+    GLCDPRINTLARGEFONT 15, 60, "Voltage"
+    GLCDPRINTLARGEFONT 15, 80, "Frequency"
+
+    Box (GLCDDeviceWidth/2)+10, 40, GLCDDeviceWidth - 10, GLCDDeviceHeight - 20, TFT_YELLOW
+    FilledBox (GLCDDeviceWidth/2)+12, 42, (GLCDDeviceWidth - 12), 78, TFT_RED
+    RoundRect (GLCDDeviceWidth/2)+20, 120, GLCDDeviceWidth - 20, GLCDDeviceHeight - 40, TFT_YELLOW
+
+    #DEFINE GLCDCOLUMNFOFSINGLECHAR 265
+
+    GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 140, "V", 4)
+    GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 180, "A", 4)
+    GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 220, "F", 4)
+
+    FilledCircle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 10, TFT_RED
+    // Display Modbus read status
+    GLCDBackGround = TFT_RED
+    GLCDPrint 300, 50, "GLCD TEST", TFT_WHITE
+    GLCDBackGround = TFT_BLACK
+    
+        // Display formatted values
+    #DEFINE GLCDCOLUMNFOFLARGEVALUES 305
+    PrintFormattedValue(140, 60,  GLCDCOLUMNFOFLARGEVALUES, 140, myVoltageW, 10, 4, ILI9488_TFT_RED)
+    PrintFormattedValue(0,   0,   GLCDCOLUMNFOFLARGEVALUES, 180, myCurrentW, 100, 4)
+    PrintFormattedValue(140, 80,  GLCDCOLUMNFOFLARGEVALUES, 220, myfrequencyW, 100, 4, ILI9488_TFT_RED)
+
+// Test software Serial
+    #IFDEF SERIALDEBUGTEST2
+        Do
+            Ser1Print "Serial Test 2"
+            Ser1Send 13
+            Ser1Send 10
+            Wait 100 ms
+        Loop
+    #ENDIF
+
+    #IFDEF JUSTSHOWGLCDPANEL
+        End
+    #ENDIF
+
+    FilledBox (GLCDDeviceWidth/2)+12, 42, (GLCDDeviceWidth - 12), 78, TFT_GREEN
+    GLCDBackGround = TFT_GREEN
+    GLCDPrint 320, 50, "RUNNING", TFT_BLACK
+    Wait 4 s
+    FilledBox (GLCDDeviceWidth/2)+12, 42, (GLCDDeviceWidth - 12), 78, TFT_GREEN
+
+    // Display Modbus read status
+    GLCDBackGround = TFT_GREEN
+    GLCDPrint 320, 50, "CONSUME", TFT_BLACK
+    GLCDBackGround = TFT_BLACK
+
+// Main Loop
+    Do
+
+        // First time through there is no data as the ProcessModbusSerialData inspected the ModBus Buffer
+        ProcessModbusSerialData(ModbusCacheValue)
+       
+        // Process and store Modbus data values in the correct variable. This should match the items in table ADL200_readregisterssequence
+        Select Case ModBusRegisterAddress
+            Case ADL200_FREQUENCY
+                myfrequencyW = ModbusCacheValue
+            Case ADL200_VOLTAGE
+                myvoltageW = ModbusCacheValue
+            Case ADL200_CURRENT
+                mycurrentW = ModbusCacheValue
+        End Select
+
+        // Display formatted values
+            // format           small     large                               value      unit,size, colour 
+            PrintFormattedValue(140, 60,  GLCDCOLUMNFOFLARGEVALUES, 140,       myVoltageW, 10, 4, ILI9488_TFT_RED)
+            PrintFormattedValue(0,   0,   GLCDCOLUMNFOFLARGEVALUES, 180,       myCurrentW, 100, 4)
+            PrintFormattedValue(140, 80,  GLCDCOLUMNFOFLARGEVALUES, 220,       myfrequencyW, 100, 4, ILI9488_TFT_RED)
+
+        // Determine next Modbus register to request data from
+        ReadTable ADL200_readregisterssequence, DataPoint, ModBusRegisterAddress
+     
+        If ModBusRegisterAddress = 0xFFFF Then 
+            // Reset to start of the data points
+            DataPoint = 1
+            If firstscreenupdate = False then
+                firstscreenupdate = True
+                // Means that a full set reading has happened
+                SendCommand_ILI9488(ILI9488_CMD_DISPLAY_ON)  ' Turn on display when current data is received
+            End If
+        Else
+
+            ModbusRegisterDataLength = ADL200_GetRegisterDataLength(ModBusRegisterAddress)
+
+            // Modbus data request cycle, these are used to config the ModBus packet
+            ModBusDeviceAddress = 1
+            ModBusAddressesTorRead = 1
+
+
+            #IFDEF DEBUG_MODBUSREQUESTS
+                // Send Modbus request
+                Ser1Send 13
+                Ser1Send 10
+                Ser1Print "ModbusRequest "
+                Ser1Print ModBusDeviceAddress
+                Ser1Print ", "
+                Ser1Print MODBUS_READ_HOLDING_REGS
+                Ser1Print ", "
+                Ser1Print ModBusRegisterAddress
+                Ser1Print ", "
+                Ser1Print ModBusAddressesTorRead
+                Ser1Send 13
+                Ser1Send 10
+            #ENDIF
+
+            // Create the ModBus packet in the array myModBusRequestArray.
+            ModbusRequest(ModBusDeviceAddress, MODBUS_READ_HOLDING_REGS, ModBusRegisterAddress, ModBusAddressesTorRead, myModBusRequestArray())
+
+            // Transmit Modbus request array packet, this was formatted in the call ModbusRequest(..) using myModBusRequestArray()
+            // This sends a ModBus request, the serial receive buffer will be updated with the response to sending this packet.
+            For ModBusCC = 0 To 7
+                HSerSend myModBusRequestArray(ModBusCC)
+            Next ModBusCC
+
+            // increment to next data point
+            DataPoint++
+
+            // MANDATED delay before next loop iteration
+            wait 25 ms  
+
+        End If
+
+        // Update pulse indicator
+        If pulse MOD 10 Then 
+            FilledCircle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 10, TFT_GREEN
+        Else
+            FilledCircle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 10, GLCDBackGround
+            Circle POS_PULSE_CIRCLEX, POS_PULSE_CIRCLEY, 9, TFT_RED
+        End If
+
+        pulse++
+
+    Loop
+
+// End of main loop
+
+    // Modbus register sequence table - this is the table of data read from the ADL200.
+    // This uses the constants defined in ADL200.h, in section ADL200 MODBUS Register Addresses
+    Table ADL200_readregisterssequence as Word
+        ADL200_FREQUENCY
+        ADL200_VOLTAGE
+        ADL200_CURRENT
+        // The last one MUST BE 0xFFFF
+        0xFFFF          
+    End Table
+
+//*************************** Supporting Subroutines ***************************************
+
+// Initialize the ring buffer and set up interrupt
+    Sub InitBufferRing
+        // Set the buffer to the first address
+        next_in = 0
+        next_out = 0
+        On Interrupt UsartRX1Ready Call readUSART
+    End Sub
+
+// USART read interrupt handler
+    Sub readUSART
+        buffer(next_in) = HSerReceive
+        temppnt = next_in
+        next_in = (next_in + 1) % BUFFER_SIZE
+        If (next_in = next_out) Then  // buffer is full!!
+            next_in = temppnt
+        End If
+    End Sub
+
+// Get a byte from the buffer
+    Function serial_data_next_byte
+        Dim local_next_out as Byte    // maintain a local copy of the next_out variable to ensure it does not change when an Interrupt happens
+        local_next_out = next_out
+        serial_data_next_byte = buffer(local_next_out)
+        local_next_out = (local_next_out + 1) % BUFFER_SIZE
+        INTOFF
+        next_out = local_next_out
+        INTON
+    End Function
+
+// Convert hexadecimal string to number
+    Function HexStringToNumber(_HS2N_HexStr As String) As Long    
+        // Local variables
+        Dim _HS2N_CurrentChar As Byte       // Stores the current character being processed
+        Dim _HS2N_CurrentCharCount As Byte  // Index for iteration through the hex string
+        Dim _HS2N_HexStr As String * 4      // Ensures input string is exactly 4 characters long
+
+        // Initialize return value
+        HexStringToNumber = 0
+
+        // Iterate through each character in the hex string
+        For _HS2N_CurrentCharCount = 1 To _HS2N_HexStr(0)
+            // Retrieve the current character
+            _HS2N_CurrentChar = _HS2N_HexStr(_HS2N_CurrentCharCount)
+
+            // Determine if character is a valid hexadecimal digit
+            If _HS2N_CurrentChar >= "0" And _HS2N_CurrentChar <= "9" Then
+                // Convert numeric characters ('0'-'9') to their integer values
+                HexStringToNumber = HexStringToNumber Or Val(Chr(_HS2N_CurrentChar))  
+            Else If _HS2N_CurrentChar >= "a" And _HS2N_CurrentChar <= "f" Then
+                // Convert lowercase hex letters ('a'-'f') to their integer values
+                HexStringToNumber = HexStringToNumber Or _HS2N_CurrentChar - 87
+            Else If _HS2N_CurrentChar >= "A" And _HS2N_CurrentChar <= "F" Then
+                // Convert uppercase hex letters ('A'-'F') to their integer values
+                HexStringToNumber = HexStringToNumber Or _HS2N_CurrentChar - 55
+            Else
+                // If an invalid character is found, return 0 and exit
+                HexStringToNumber = 0
+                Exit Function
+            End If
+
+            // Shift bits left by 4 positions (equivalent to multiplying by 16) if not the last character
+            If _HS2N_CurrentCharCount < _HS2N_HexStr(0) Then HexStringToNumber = HexStringToNumber << 4  
+        Next
+    End Function
+
+// Format and print values at specified locations
+    Sub PrintFormattedValue(PFV_PRINTLOCX1 As Word, PFV_PRINTLOCY1 As Word, PFV_PRINTLOCX2 As Word, PFV_PRINTLOCY2 As Word, _HS2N_value As Word, _HS2N_divisor As Word, _GLCDPrintSize As Word, Optional Color As Long = TFT_RED)
+        Dim PrintData As String
+
+        #IFDEF DEBUG_PRINTFORMATTEDVALUE
+            Ser1Print "Raw:"
+            Ser1Print _HS2N_value
+            Ser1Print ",Div:"
+            Ser1Print _HS2N_divisor
+            Ser1Send 13
+            Ser1Send 10
+        #ENDIF
+
+        ' Default value if the number is zero
+        PrintData = "0.00"
+        If _HS2N_value <> 0 Then
+            ' Format value into a string with two decimal places
+            Dim TempValue As Long
+            TempValue = _HS2N_value / _HS2N_divisor
+            PrintData = Str(TempValue) + "."
+            Dim DecimalPart As Word
+            DecimalPart = (_HS2N_value MOD _HS2N_divisor) * 100
+            DecimalPart = DecimalPart / _HS2N_divisor
+            If DecimalPart < 10 Then
+                PrintData = PrintData + "0"
+                PrintData = PrintData + Str(DecimalPart)
+            Else
+                PrintData = PrintData + Str(DecimalPart)
+            End If
+            PrintData = PrintData
+        End If
+
+        
+        If PrintData(0) > 6 Then
+            // Fast trim
+            PrintData(0) = 6
+        Else
+            PrintData = LeftPad( PrintData, 6 , " ")
+        End if
+
+        #IFDEF DEBUG_PRINTFORMATTEDVALUE
+            Ser1Print "Formatted:"
+            Ser1Print PrintData
+            Ser1Send 13
+            Ser1Send 10
+        #ENDIF
+
+        If PFV_PRINTLOCX1 <> 0 OR PFV_PRINTLOCY1 <> 0 Then
+            GLCDPRINTLARGEFONT PFV_PRINTLOCX1, PFV_PRINTLOCY1, PrintData, Color
+        End If
+
+        If PFV_PRINTLOCX2 <> 0 OR PFV_PRINTLOCY2 <> 0 Then
+            GLCDPrintWithSize(PFV_PRINTLOCX2, PFV_PRINTLOCY2, PrintData, _GLCDPrintSize)
+        End If
+    End Sub
+
+// Format and print values at specified locations
+    Sub ORGPrintFormattedValue(PFV_PRINTLOCX1 As Word, PFV_PRINTLOCY1 As Word, PFV_PRINTLOCX2 As Word, PFV_PRINTLOCY2 As Word, _HS2N_value As Word, _HS2N_divisor As Word, _GLCDPrintSize As Word, Optional Color As Long = TFT_RED)
+        Dim PrintData As String
+
+        ' Default value if the number is zero
+        PrintData = "0.0  "
+        If _HS2N_value <> 0 Then
+            ' Format value into a string with a decimal point
+            PrintData = Str(_HS2N_value / _HS2N_divisor) + "."
+            PrintData = PrintData + Mid(Str(_HS2N_value), Len(Str(_HS2N_value) + " ") - 1, 3)
+        End If
+
+        If PFV_PRINTLOCX1 <> 0 OR PFV_PRINTLOCY1 <> 0 Then
+            ' Print the formatted value with large font at specified coordinates and color
+            GLCDPRINTLARGEFONT PFV_PRINTLOCX1, PFV_PRINTLOCY1, PrintData, Color
+        End If
+
+        If PFV_PRINTLOCX2 <> 0 OR PFV_PRINTLOCY2 <> 0 Then
+            ' Print the formatted value with specified font size and color at separate coordinates
+            GLCDPrintWithSize(PFV_PRINTLOCX2, PFV_PRINTLOCY2, PrintData, _GLCDPrintSize)
+        End If
+    End Sub
+
+// Process Modbus serial data using a state machine to handle incoming Modbus RTU responses
+    // Purpose:
+    //   Processes serial data from the ADL2000 energy monitor via Modbus RTU protocol, parsing
+    //   responses to extract register values (e.g., frequency, voltage, current). The subroutine
+    //   uses a finite state machine to synchronize with the device address, validate function codes,
+    //   handle data bytes, and manage errors. It outputs the extracted value to ModbusCacheValue
+    //   for use in the main program, which displays metrics on an ILI9488 GLCD.
+    //
+    // Input Parameters:
+    //   ModbusCacheValue (out Long): The extracted register value (e.g., 5010 for frequency).
+    //
+    // Global Variables Used:
+    //   ModBusDeviceAddress (Byte): Device address (e.g., 1 for ADL2000).
+    //   ModbusRegisterDataLength (Byte): Expected data length (1, 2, or 4 bytes) from ADL200_GetRegisterDataLength.
+    //   ModBusRegisterAddress (Word): Current register being read (e.g., 0x0011 for ADL200_FREQUENCY).
+    //   ModbusCurrentState (Byte): Current state of the state machine (MODBUS_IDLE, MODBUS_SYNC, etc.).
+    //   ModbusByteCounter (Byte): Tracks the position of the current byte in the response.
+    //   serial_data_in_buffer_ready (Macro): Checks if data is available in the ring buffer (next_in <> next_out).
+    //   serial_data_next_byte (Function): Retrieves the next byte from the ring buffer.
+    //
+    // State Machine States (ModbusState Enum):
+    //   MODBUS_IDLE: Waiting for the device address to start a new message.
+    //   MODBUS_SYNC: Verifying the function code (e.g., 0x03 for Read Holding Registers).
+    //   MODBUS_PROCESS_DATA: Processing data bytes based on expected length.
+    //   MODBUS_ERROR: Handling error responses (e.g., 0x83 with exception code).
+    //   MODBUS_COMPLETE: Finalizing data extraction and preparing for reset.
+    //
+    // Modbus RTU Response Format:
+    //   Normal (Function Code 0x03): [Address, 0x03, ByteCount, Data..., CRC_L, CRC_H]
+    //     e.g., 01,03,02,13,92,34,D9 (ByteCount=2, Data=0x1392=5010, CRC=0xD934)
+    //   Error (Function Code 0x83): [Address, 0x83, ExceptionCode, CRC_L, CRC_H]
+    //     e.g., 01,83,02,C0,F1 (ExceptionCode=02, CRC=0xF1C0)
+    //
+    // Debug Output:
+    //   Controlled by #IFDEF DEBUG_PROCESSMODBUSSERIALDATA:
+    //     - Logs each received byte as hex (e.g., "01,03,02,...").
+    //     - Logs length errors ("LEN_ERR:Reg=X,Exp=Y") if ByteCount mismatches ModbusRegisterDataLength.
+    //     - Logs error responses ("ERR:X") for exception codes.
+    //     - Logs final value ("= X") when MODBUS_COMPLETE is reached.
+    //   Output via Ser1Print on PORTD.2 (Arduino Nano D2, software serial at 9600 baud).
+    //
+    // Notes:
+    //   - The subroutine assumes a ring buffer (buffer, next_in, next_out) populated by the UsartRX1Ready interrupt.
+    //   - A 10 ms timeout (wait 10 ms) could be add at the end of the routine to prevent buffer stalls.
+    //   - The code handles 1, 2, or 4-byte register data, storing values in ModbusCacheValue (Long).
+    //   - Errors (e.g., length mismatch, invalid function code) reset the state machine to MODBUS_IDLE.
+    //   - CRC bytes are skipped after data processing to avoid interference with subsequent messages.
+    Sub ProcessModbusSerialData(out ModbusCacheValue)
+        // Local variables
+        Dim ModbusCacheValue as Long        // Stores the extracted register value (output parameter)
+        Dim ExpectedByteCount as Byte       // Number of data bytes in the response (from ByteCount)
+        ModbusCacheValue = 0                // Initialize output value to 0
+        ExpectedByteCount = 0               // Initialize expected byte count to 0
+        ModbusByteCounter = 1               // Initialize byte counter to 1 (first byte is address)
+
+        // Loop while data is available in the ring buffer
+        DO WHILE serial_data_in_buffer_ready
+            Dim serial_data_byte As Byte    // Current byte from the ring buffer
+            serial_data_byte = serial_data_next_byte // Fetch next byte using buffer function
+            #IFDEF DEBUG_PROCESSMODBUSSERIALDATA
+                // Debug: Print each byte as hex, followed by a comma
+                Ser1Print hex(serial_data_byte)
+                Ser1Print ","
+            #ENDIF
+
+            // State machine to process Modbus response
+            Select Case ModbusCurrentState
+                // Waiting for the device address to start a new message
+                Case MODBUS_IDLE
+                    // Check if the byte matches the expected device address
+                    If serial_data_byte = ModBusDeviceAddress Then
+                        ModbusCurrentState = MODBUS_SYNC   // Move to sync state to check function code
+                        ModbusCacheValue = 0               // Reset output value
+                        ExpectedByteCount = 0              // Reset expected byte count
+                        ModbusByteCounter = 1              // Reset byte counter for new message
+                    End If
+                
+                // Verify the function code
+                Case MODBUS_SYNC
+                    // Check for Read Holding Registers (0x03)
+                    If serial_data_byte = MODBUS_READ_HOLDING_REGS Then
+                        ModbusCurrentState = MODBUS_PROCESS_DATA // Move to data processing
+                        ModbusByteCounter = 1                    // Reset counter for data bytes
+                    // Check for error response (0x83 = 0x03 | 0x80)
+                    Else If serial_data_byte = (MODBUS_READ_HOLDING_REGS OR 0x80) Then
+                        ModbusCurrentState = MODBUS_ERROR       // Move to error handling
+                        ModbusByteCounter = 1                   // Reset counter for exception code
+                    Else
+                        ModbusCurrentState = MODBUS_IDLE        // Invalid function code, reset
+                    End If
+
+                // Process data bytes based on expected length
+                Case MODBUS_PROCESS_DATA
+                    Select Case ModbusByteCounter
+                        // Byte 1: Store ByteCount from response
+                        Case 1
+                            ExpectedByteCount = serial_data_byte // Number of data bytes to expect
+                        // Byte 2: First data byte, validate length
+                        Case 2
+                            // Check if ByteCount matches expected register length
+                            If ExpectedByteCount = ModbusRegisterDataLength Then
+                                Select Case ModbusRegisterDataLength 
+                                    // 1-byte register: Store directly
+                                    Case 1
+                                        [byte]ModbusCacheValue = serial_data_byte
+                                        ModbusCurrentState = MODBUS_COMPLETE
+                                    // 2-byte register: Store high byte
+                                    Case 2
+                                        ModbusCacheValue_H = serial_data_byte
+                                    // 4-byte register: Store highest byte
+                                    Case 4
+                                        ModbusCacheValue_E = serial_data_byte
+                                End Select
+                            Else
+                                // Debug: Log length mismatch error
+                                #IFDEF DEBUG_PROCESSMODBUSSERIALDATA
+                                    Ser1Print "LEN_ERR:Reg="
+                                    Ser1Print ModBusRegisterAddress
+                                    Ser1Print ",Exp="
+                                    Ser1Print ExpectedByteCount
+                                    Ser1Send 13
+                                    Ser1Send 10
+                                #ENDIF
+                                ModbusCurrentState = MODBUS_IDLE // Reset on mismatch
+                            End If
+                        // Byte 3: Second data byte for 2 or 4-byte registers
+                        Case 3
+                            Select Case ModbusRegisterDataLength 
+                                // 2-byte register: Store low byte, complete
+                                Case 2
+                                    [byte]ModbusCacheValue = serial_data_byte
+                                    ModbusCurrentState = MODBUS_COMPLETE
+                                // 4-byte register: Store second highest byte
+                                Case 4
+                                    ModbusCacheValue_U = serial_data_byte
+                            End Select
+                        // Byte 4: Third data byte for 4-byte registers
+                        Case 4
+                            If ModbusRegisterDataLength = 4 Then
+                                ModbusCacheValue_H = serial_data_byte // High byte of lower word
+                            Else
+                                ModbusCurrentState = MODBUS_IDLE     // Invalid, reset
+                            End If
+                        // Byte 5: Fourth data byte for 4-byte registers
+                        Case 5
+                            If ModbusRegisterDataLength = 4 Then
+                                [byte]ModbusCacheValue = serial_data_byte // Low byte, complete
+                                ModbusCurrentState = MODBUS_COMPLETE
+                            Else
+                                ModbusCurrentState = MODBUS_IDLE     // Invalid, reset
+                            End If
+                        // Any other byte: Reset to handle unexpected data
+                        Case Else
+                            ModbusCurrentState = MODBUS_IDLE
+                    End Select                
+                    ModbusByteCounter++ // Increment byte counter
+
+                // Handle error responses (e.g., 0x83, exception code)
+                Case MODBUS_ERROR
+                    If ModbusByteCounter = 1 Then
+                        // Debug: Print exception code
+                        #IFDEF DEBUG_PROCESSMODBUSSERIALDATA
+                            Ser1Print "ERR:"
+                            Ser1Print hex(serial_data_byte)
+                            Ser1Send 13
+                            Ser1Send 10
+                        #ENDIF
+                        ModbusCurrentState = MODBUS_IDLE    // Reset after exception code
+                        ModbusByteCounter = 1               // Prepare for new message
+                        ExpectedByteCount = 0               // Clear expected count
+                    End If
+                    ModbusByteCounter++                     // Increment counter
+
+                // Finalize processing, skip CRC, and output value
+                Case MODBUS_COMPLETE
+                    If ModbusByteCounter <= ExpectedByteCount + 2 Then
+                        ModbusByteCounter++ // Skip CRC bytes (2 bytes)
+                    Else
+                        // Debug: Print final extracted value
+                        #IFDEF DEBUG_PROCESSMODBUSSERIALDATA
+                            Ser1Print " = "
+                            Ser1Print ModbusCacheValue
+                            Ser1Send 13
+                            Ser1Send 10
+                        #ENDIF
+                        ModbusCurrentState = MODBUS_IDLE    // Reset for next message
+                        ModbusByteCounter = 1               // Reset counter
+                        ExpectedByteCount = 0               // Clear expected count
+                    End If
+            End Select
+        Loop
+    End Sub
+
+// Get register data length based on register constant
+    FUNCTION ADL200_GetRegisterDataLength(in ADL200_registerConstant) AS BYTE
+        Dim ADL200_reg as Byte
+        Dim ADL200_i, ADL200_i_Items as Byte
+
+        READTABLE ADL200_REGISTER_FORMATS, 0, ADL200_i_Items
+
+        For ADL200_i = 1 to ADL200_i_Items Step 2
+            READTABLE ADL200_REGISTER_FORMATS, ADL200_i, ADL200_reg
+            IF ADL200_reg = ADL200_registerConstant THEN
+                READTABLE ADL200_REGISTER_FORMATS, ADL200_i + 1, ADL200_GetRegisterDataLength
+                Exit Function
+            End IF
+        Next
+        
+        ADL200_GetRegisterDataLength = 0
+    END FUNCTION
