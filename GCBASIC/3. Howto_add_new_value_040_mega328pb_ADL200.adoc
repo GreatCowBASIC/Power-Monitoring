@@ -1,0 +1,198 @@
+= Instructions to Add a New ADL200 Parameter to the GLCD Display
+
+== Overview
+
+These instructions guide you through adding a new ADL200 parameter (e.g., `ADL200_ACTIVE_POWER`) to the GLCD display in the `040_mega328pb_ADL200.gcb` GCBASIC project. The new parameter will be retrieved via Modbus RTU, processed, and displayed on the ILI9488 GLCD with two decimal places, consistent with existing metrics (voltage, frequency, current). The steps modify the register table, variable declarations, data processing, and GLCD display layout without altering the project's core functionality, aligning with the updated main loop and state machine in the provided baseline.
+
+== Prerequisites
+
+- GCBASIC compiler installed (http://gcbasic.sourceforge.net/).
+- `040_mega328pb_ADL200.gcb`, `glcd.h`, `SoftSerial.h`, and `ADL200.h` in the project directory.
+- Hardware: ATmega328PB (16 MHz), ILI9488 GLCD, ADL2000 Modbus device, and serial monitor for debugging.
+- Familiarity with the project's structure, Modbus RTU protocol, and the `ProcessModbusSerialData` state machine.
+
+== Instructions
+
+=== Step 1: Update the Register Sequence Table
+
+Add the new parameter (`ADL200_ACTIVE_POWER`) to the `ADL200_readregisterssequence` table to include it in the Modbus request cycle.
+
+*Location*: Near the end of `040_mega328pb_ADL200.gcb`, in the `Table ADL200_readregisterssequence` section.
+
+*Change*:
+Replace:
+```GCB
+Table ADL200_readregisterssequence as Word
+    ADL200_FREQUENCY
+    ADL200_VOLTAGE
+    ADL200_CURRENT
+    // The last one MUST BE 0xFFFF
+    0xFFFF          
+End Table
+```
+With:
+```GCB
+Table ADL200_readregisterssequence as Word
+    ADL200_FREQUENCY
+    ADL200_VOLTAGE
+    ADL200_CURRENT
+    ADL200_ACTIVE_POWER
+    // The last one MUST BE 0xFFFF
+    0xFFFF          
+End Table
+```
+
+*Purpose*: Adds `ADL200_ACTIVE_POWER` (address `0x000D`, 2 bytes, per `ADL200.h`) to the list of registers queried in the main loop, ensuring it is requested via `ModbusRequest`.
+
+=== Step 2: Declare a Variable for the New Parameter
+
+Add a variable to store the new parameter’s value, matching the data type used for similar metrics (e.g., `myfrequencyW`, `myVoltageW`, `mycurrentW`).
+
+*Location*: In the "Data variables" section, after `Dim myfrequencyW, myVoltageW, mycurrentW as Word`.
+
+*Change*:
+Replace:
+```GCB
+Dim mycurrenttotalactivenergyL, mycurrentforwaretotalenergyL as Long
+Dim myfrequencyW, myVoltageW, mycurrentW as Word
+Dim pulse as Byte
+```
+With:
+```GCB
+Dim mycurrenttotalactivenergyL, mycurrentforwaretotalenergyL as Long
+Dim myfrequencyW, myVoltageW, mycurrentW, myactivepowerW as Word
+Dim pulse as Byte
+```
+
+*Purpose*: Declares `myactivepowerW` as a `Word` to store the 2-byte value of `ADL200_ACTIVE_POWER` (unit: 0.001 kW, to be displayed as kW with /1000 scaling).
+
+=== Step 3: Process the New Parameter’s Data
+
+Update the `Select Case` block in the main loop to store the `ModbusCacheValue` for `ADL200_ACTIVE_POWER`.
+
+*Location*: In the main loop, within the `Select Case ModBusRegisterAddress` block, after processing `ProcessModbusSerialData`.
+
+*Change*:
+Replace:
+```GCB
+Select Case ModBusRegisterAddress
+    Case ADL200_FREQUENCY
+        myfrequencyW = ModbusCacheValue
+    Case ADL200_VOLTAGE
+        myvoltageW = ModbusCacheValue
+    Case ADL200_CURRENT
+        mycurrentW = ModbusCacheValue
+End Select
+```
+With:
+```GCB
+Select Case ModBusRegisterAddress
+    Case ADL200_FREQUENCY
+        myfrequencyW = ModbusCacheValue
+    Case ADL200_VOLTAGE
+        myvoltageW = ModbusCacheValue
+    Case ADL200_CURRENT
+        mycurrentW = ModbusCacheValue
+    Case ADL200_ACTIVE_POWER
+        myactivepowerW = ModbusCacheValue
+End Select
+```
+
+*Purpose*: Assigns the Modbus response value for `ADL200_ACTIVE_POWER` (e.g., 1234) to `myactivepowerW` for display.
+
+=== Step 4: Update GLCD Display for the New Parameter
+
+Add a label and display call for `ADL200_ACTIVE_POWER` on the GLCD, adjusting the layout to fit the new metric without overlapping existing displays (voltage at y=60, frequency at y=80).
+
+*Location*: In the "Display setup" section, after the existing `GLCDPRINTLARGEFONT` calls, and in the main loop’s display section, after the existing `PrintFormattedValue` calls.
+
+*Change*:
+1. In the "Display setup" section, after `GLCDPRINTLARGEFONT 15, 80, "Frequency"`:
+Add:
+```GCB
+GLCDPRINTLARGEFONT 15, 100, "Actv Power"
+```
+2. After `GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 220, "F", 4)`:
+Add:
+```GCB
+GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 260, "kW", 4)
+```
+3. In the main loop, after `PrintFormattedValue(140, 80, GLCDCOLUMNFOFLARGEVALUES, 220, myfrequencyW, 100, 4, ILI9488_TFT_RED)`:
+Add:
+```GCB
+PrintFormattedValue(140, 100, GLCDCOLUMNFOFLARGEVALUES, 260, myactivepowerW, 1000, 4, ILI9488_TFT_RED)
+```
+
+*Purpose*:
+- Adds a "Power" label at coordinates (15, 100) and a "kW" unit label at (265, 260) using font size 4.
+- Displays `myactivepowerW` at (140, 100) and (305, 260), scaled by 1000 (0.001 kW to kW, e.g., 1234 → 1.23 kW) with two decimal places, in red to match existing metrics.
+
+=== Step 5: Verify Register Definition in ADL200.h
+
+Ensure `ADL200_ACTIVE_POWER` is correctly defined with a 2-byte length in `ADL200.h` to match the expected Modbus response format.
+
+*Location*: In `ADL200.h`, within the `Table ADL200_REGISTER_FORMATS` and register definitions.
+
+*Check*:
+Verify:
+```GCB
+Table ADL200_REGISTER_FORMATS
+    // ... other entries ...
+    ADL200_ACTIVE_POWER, 2
+    // ... other entries ...
+End Table
+```
+And:
+```GCB
+#DEFINE ADL200_ACTIVE_POWER 0x000D // Active power (Unit: 0.001kW)
+```
+
+*Purpose*: Confirms `ADL200_ACTIVE_POWER` is defined at address `0x000D` with 2 bytes, matching the Modbus response format (`01,03,02,DATA1,DATA2,CRC1,CRC2`).
+
+=== Step 6: Enable Debug Output (Optional)
+
+Enable debug output to verify the new parameter’s data is correctly received and processed.
+
+*Location*: At the top of `040_mega328pb_ADL200.gcb`, in the "Testing constants" section.
+
+*Change*:
+Uncomment or add:
+```GCB
+#DEFINE DEBUG_PROCESSMODBUSSERIALDATA
+#DEFINE DEBUG_PRINTFORMATTEDVALUE
+#DEFINE DEBUG_MODBUSREQUESTS
+```
+
+*Purpose*: Enables logging of Modbus requests (e.g., `ModbusRequest 1, 3, 13, 1`), responses (e.g., `01,03,02,04,D2,CRC1,CRC2, = 1234`), and formatted values (e.g., `Raw:1234,Div:1000,Formatted:1.23`) via software serial on PORTD.2 (D2, 9600 baud). This helps confirm the active power value is correctly received and displayed.
+
+=== Step 7: Compile and Test
+
+1. Save the modified `040_mega328pb_ADL200.gcb`.
+2. Compile using GCBASIC:
+   ```bash
+   gcbasic 040_mega328pb_ADL200.gcb
+   ```
+3. Upload to the ATmega328PB using a programmer (e.g., USBasp):
+   ```bash
+   avrdude -c usbasp -p m328pb -U flash:w:040_mega328pb_ADL200.hex
+   ```
+4. Connect a serial monitor to PORTD.2 (D2, 9600 baud) if debug is enabled.
+5. Verify on the GLCD:
+   - Confirm the "Power" label appears at (15, 100).
+   - Check the active power value (e.g., "1.23 kW") at (140, 100) and (305, 260).
+   - Verify debug output shows `ModbusRequest 1, 3, 13, 1` and correct `ModbusCacheValue` (e.g., `= 1234`).
+
+=== Step 8: Troubleshoot
+
+- *No Display for Power*: Verify the `GLCDPRINTLARGEFONT` and `PrintFormattedValue` coordinates; ensure `GLCD_TYPE_ILI9488` and `ILI9488_HARDWARESPI` are defined in the code.
+- *Incorrect Value*: Check `ADL200_ACTIVE_POWER` in `ADL200.h` (address `0x000D`, 2 bytes). Confirm the Modbus response has 2 data bytes (e.g., `01,03,02,04,D2,CRC1,CRC2`). If `LEN_ERR:Reg=13,Exp=2` appears, verify `ADL200_GetRegisterDataLength` returns 2 for `0x000D`.
+- *Debug Output Missing*: Ensure `#DEFINE DEBUG_PROCESSMODBUSSERIALDATA` and `#DEFINE DEBUG_PRINTFORMATTEDVALUE` are enabled; check the serial monitor connection to PORTD.2 (9600 baud).
+- *Buffer Issues*: If values are inconsistent, verify `serial_data_in_buffer_ready` and `serial_data_next_byte` (ring buffer handling in `readUSART` and `serial_data_next_byte`). Consider adding a `wait 10 ms` at the end of `ProcessModbusSerialData` if buffer stalls occur.
+
+== Notes
+
+- The new parameter (`ADL200_ACTIVE_POWER`) is displayed below frequency at (140, 100) and (305, 260) to avoid overlapping existing metrics (voltage at y=60, frequency at y=80).
+- The divisor `1000` is used for active power (unit: 0.001 kW per `ADL200.h`), ensuring correct scaling (e.g., 1234 → 1.23 kW).
+- No hardware changes are required, as the existing pins (PORTB for GLCD, PORTD for serial) are sufficient.
+- The updated main loop structure (with `ProcessModbusSerialData` called before pulse updates) is accounted for, and the removal of the 10 ms timeout in `ProcessModbusSerialData` does not affect these steps.
+- Test thoroughly to ensure the GLCD layout remains clear and the active power value is displayed accurately (e.g., "1.23 kW").

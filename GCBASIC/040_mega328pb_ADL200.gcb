@@ -162,6 +162,9 @@
 // Display position constants
     #DEFINE POS_PULSE_CIRCLEX 450
     #DEFINE POS_PULSE_CIRCLEY 98
+    #DEFINE GLCDCOLUMNFOFLARGEVALUES 305
+    #DEFINE GLCDCOLUMNFOFSINGLECHAR 265
+
 
 // Modbus state machine variables
     Dim screenX, screenY, datacounter, dataPoint as Word
@@ -224,8 +227,6 @@
     FilledBox (GLCDDeviceWidth/2)+12, 42, (GLCDDeviceWidth - 12), 78, TFT_RED
     RoundRect (GLCDDeviceWidth/2)+20, 120, GLCDDeviceWidth - 20, GLCDDeviceHeight - 40, TFT_YELLOW
 
-    #DEFINE GLCDCOLUMNFOFSINGLECHAR 265
-
     GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 140, "V", 4)
     GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 180, "A", 4)
     GLCDPrintWithSize(GLCDCOLUMNFOFSINGLECHAR, 220, "F", 4)
@@ -236,8 +237,7 @@
     GLCDPrint 300, 50, "GLCD TEST", TFT_WHITE
     GLCDBackGround = TFT_BLACK
     
-        // Display formatted values
-    #DEFINE GLCDCOLUMNFOFLARGEVALUES 305
+    // Display formatted values
     PrintFormattedValue(140, 60,  GLCDCOLUMNFOFLARGEVALUES, 140, myVoltageW, 10, 4, ILI9488_TFT_RED)
     PrintFormattedValue(0,   0,   GLCDCOLUMNFOFLARGEVALUES, 180, myCurrentW, 100, 4)
     PrintFormattedValue(140, 80,  GLCDCOLUMNFOFLARGEVALUES, 220, myfrequencyW, 100, 4, ILI9488_TFT_RED)
