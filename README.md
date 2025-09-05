@@ -1,6 +1,9 @@
 # Power-Monitoring
 
 This repository provides GCBASIC support for the ADL200 single-phase electric meter. The ADL200 is designed for single-phase active energy measurement on low voltage systems and can measure various electrical parameters including voltage, current, and power.
+<p align="center">
+  <img src="https://github.com/GreatCowBASIC/Power-Monitoring/blob/master/Images/adl200-1.png?raw=true" alt="ADL200 Electric Meter" width="50%">
+</p>
 
 ## Key Features
 - **Active Energy Measurement:** Accurately measure the active energy consumption on single-phase systems.
